@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>숫자 크기 비교 게임</title>
-    <script src="https://cdn.tailwindcss.com"></script>
+    <title>숫자 크기 비교하기 - 현도초</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans KR', sans-serif; }
+        body { font-family: 'Noto Sans KR', sans-serif; background-color: #f5f7ff; }
+        .feedback-overlay { pointer-events: none; }
     </style>
 </head>
 <body>
@@ -19,222 +20,147 @@
     <script type="text/babel">
         const { useState, useEffect, useRef } = React;
 
-        // --- 오디오 로직 ---
-        const playTadaSound = () => {
+        // 효과음 함수
+        const playSound = (type) => {
             try {
                 const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const playNote = (frequency, startTime, duration, type = 'sine') => {
-                    const oscillator = audioCtx.createOscillator();
-                    const gainNode = audioCtx.createGain();
-                    oscillator.type = type;
-                    oscillator.frequency.value = frequency;
-                    oscillator.connect(gainNode);
-                    gainNode.connect(audioCtx.destination);
-                    gainNode.gain.setValueAtTime(0.1, startTime);
-                    gainNode.gain.exponentialRampToValueAtTime(0.001, startTime + duration);
-                    oscillator.start(startTime);
-                    oscillator.stop(startTime + duration);
-                };
-                const now = audioCtx.currentTime;
-                playNote(523.25, now, 0.2, 'triangle'); 
-                playNote(659.25, now + 0.2, 0.6, 'triangle'); 
-                playNote(783.99, now + 0.2, 0.6, 'triangle'); 
-                playNote(1046.50, now + 0.2, 0.6, 'triangle');
-            } catch (e) { console.log("오디오 재생 불가", e); }
+                if (type === 'correct') {
+                    const now = audioCtx.currentTime;
+                    const notes = [523.25, 659.25, 783.99, 1046.50];
+                    notes.forEach((freq, i) => {
+                        const osc = audioCtx.createOscillator();
+                        const gain = audioCtx.createGain();
+                        osc.type = 'triangle';
+                        osc.frequency.value = freq;
+                        osc.connect(gain); gain.connect(audioCtx.destination);
+                        gain.gain.setValueAtTime(0.1, now + (i*0.1));
+                        gain.gain.exponentialRampToValueAtTime(0.001, now + (i*0.1) + 0.4);
+                        osc.start(now + (i*0.1)); osc.stop(now + (i*0.1) + 0.4);
+                    });
+                } else {
+                    const osc = audioCtx.createOscillator();
+                    const gain = audioCtx.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, audioCtx.currentTime);
+                    osc.connect(gain); gain.connect(audioCtx.destination);
+                    gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
+                    osc.start(); osc.stop(audioCtx.currentTime + 0.3);
+                }
+            } catch (e) { console.log(e); }
         };
 
-        const playErrorSound = () => {
-            try {
-                const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-                const oscillator = audioCtx.createOscillator();
-                const gainNode = audioCtx.createGain();
-                oscillator.type = 'sawtooth';
-                oscillator.frequency.setValueAtTime(150, audioCtx.currentTime);
-                oscillator.frequency.exponentialRampToValueAtTime(100, audioCtx.currentTime + 0.3);
-                oscillator.connect(gainNode);
-                gainNode.connect(audioCtx.destination);
-                gainNode.gain.setValueAtTime(0.1, audioCtx.currentTime);
-                gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.3);
-                oscillator.start();
-                oscillator.stop(audioCtx.currentTime + 0.3);
-            } catch (e) { console.log("오디오 재생 불가", e); }
+        const generateNumbers = () => {
+            let n1 = Math.floor(Math.random() * 9000) + 1000;
+            let n2 = Math.floor(Math.random() * 9000) + 1000;
+            if (Math.random() > 0.7) n2 = n1; // 30% 확률로 같게
+            return Math.random() > 0.5 ? [n1, n2] : [n2, n1];
         };
 
-        // --- 문제 생성 로직 ---
-        const generateSimilarNumbers = () => {
-            let num1 = Math.floor(Math.random() * 9000) + 1000;
-            let num2;
-            const rand = Math.random();
-            if (rand < 0.20) {
-                num2 = Math.random() > 0.5 ? Math.floor(num1 / 10) : num1 * 10 + Math.floor(Math.random() * 10);
-            } else if (rand < 0.35) {
-                num2 = num1;
-            } else if (rand < 0.65) {
-                let str1 = num1.toString();
-                const swapIdx = Math.floor(Math.random() * (str1.length - 1));
-                let arr = str1.split('');
-                let temp = arr[swapIdx];
-                arr[swapIdx] = arr[swapIdx + 1];
-                arr[swapIdx + 1] = temp;
-                num2 = parseInt(arr.join(''), 10);
-                if (num1 === num2) num2 += 1;
-            } else {
-                let diffs = [1, 10, 100, 1000];
-                let diff = diffs[Math.floor(Math.random() * diffs.length)];
-                num2 = num1 + (Math.random() > 0.5 ? diff : -diff);
-            }
-            if (num2 <= 0) num2 = 100;
-            return Math.random() > 0.5 ? [num2, num1] : [num1, num2];
-        };
-
-        const TIME_LIMIT = 100;
-        const TOTAL_QUESTIONS = 10;
-
-        // --- 메인 앱 컴포넌트 ---
         function App() {
             const [gameState, setGameState] = useState('start');
-            const [num1, setNum1] = useState(0);
-            const [num2, setNum2] = useState(0);
-            const [attempts, setAttempts] = useState(0);
+            const [nums, setNums] = useState([0, 0]);
             const [history, setHistory] = useState([]);
-            const [showFeedback, setShowFeedback] = useState(false);
-            const [feedbackStatus, setFeedbackStatus] = useState(''); 
-            const [timeLeft, setTimeLeft] = useState(TIME_LIMIT); 
+            const [attempts, setAttempts] = useState(0);
+            const [feedback, setFeedback] = useState(null);
+            const [timeLeft, setTimeLeft] = useState(100);
             const timerRef = useRef(null);
-
-            useEffect(() => {
-                return () => clearInterval(timerRef.current);
-            }, []);
-
-            const startGame = () => {
-                setHistory([]);
-                setGameState('playing');
-                initNewProblem();
-            };
 
             const startTimer = () => {
                 clearInterval(timerRef.current);
-                setTimeLeft(TIME_LIMIT);
+                setTimeLeft(100);
                 timerRef.current = setInterval(() => {
-                    setTimeLeft(prev => {
-                        if (prev <= 1) {
-                            clearInterval(timerRef.current);
-                            handleTimeOut();
-                            return 0;
-                        }
-                        return prev - 1;
+                    setTimeLeft(p => {
+                        if (p <= 1) { clearInterval(timerRef.current); handleResult('timeout'); return 0; }
+                        return p - 1;
                     });
                 }, 100);
             };
 
-            const initNewProblem = () => {
-                const [n1, n2] = generateSimilarNumbers();
-                setNum1(n1);
-                setNum2(n2);
+            const nextProblem = () => {
+                setNums(generateNumbers());
                 setAttempts(0);
                 startTimer();
             };
 
-            const handleTimeOut = () => {
-                playErrorSound();
-                setAttempts(prev => prev + 1);
-                setFeedbackStatus('timeout');
-                setShowFeedback(true);
-                setTimeout(() => {
-                    setShowFeedback(false);
-                    startTimer();
-                }, 1000);
-            };
-
-            const handleAnswer = (operator) => {
-                if (showFeedback || gameState !== 'playing') return;
-                clearInterval(timerRef.current);
-
-                let isCorrect = (operator === '>' && num1 > num2) || 
-                                (operator === '=' && num1 === num2) || 
-                                (operator === '<' && num1 < num2);
-
-                if (isCorrect) {
-                    playTadaSound();
-                    setFeedbackStatus('correct');
-                    setShowFeedback(true);
-                    let mark = attempts === 0 ? 'O' : (attempts === 1 ? '△' : 'X');
+            const handleResult = (type) => {
+                if (feedback) return;
+                setFeedback(type);
+                if (type === 'correct') {
+                    playSound('correct');
+                    const mark = attempts === 0 ? 'O' : (attempts === 1 ? '△' : 'X');
                     const newHistory = [...history, mark];
                     setHistory(newHistory);
                     setTimeout(() => {
-                        setShowFeedback(false);
-                        if (newHistory.length >= TOTAL_QUESTIONS) setGameState('end');
-                        else initNewProblem();
+                        setFeedback(null);
+                        if (newHistory.length >= 10) setGameState('end');
+                        else nextProblem();
                     }, 1500);
                 } else {
-                    playErrorSound();
+                    playSound('error');
                     setAttempts(prev => prev + 1);
-                    setFeedbackStatus('incorrect');
-                    setShowFeedback(true);
-                    setTimeout(() => {
-                        setShowFeedback(false);
-                        startTimer();
-                    }, 1000);
+                    setTimeout(() => { setFeedback(null); startTimer(); }, 1000);
                 }
             };
 
-            const calculateScore = () => history.reduce((acc, m) => acc + (m === 'O' ? 10 : (m === '△' ? 5 : 0)), 0);
-            const getMarkColor = (m) => m === 'O' ? 'text-green-500' : (m === '△' ? 'text-yellow-500' : 'text-red-500');
-            const timerColor = timeLeft > 50 ? 'bg-green-400' : (timeLeft > 20 ? 'bg-orange-400' : 'bg-red-500');
+            const checkAnswer = (op) => {
+                const [n1, n2] = nums;
+                const isCorrect = (op === '>' && n1 > n2) || (op === '=' && n1 === n2) || (op === '<' && n1 < n2);
+                handleResult(isCorrect ? 'correct' : 'incorrect');
+            };
 
-            if (gameState === 'start') {
-                return (
-                    <div className="min-h-screen bg-indigo-50 flex flex-col items-center justify-center p-4">
-                        <h1 className="text-5xl font-black text-indigo-900 mb-6 text-center">숫자 크기 비교</h1>
-                        <p className="text-xl text-indigo-600 font-bold mb-12">총 {TOTAL_QUESTIONS}문제! 빠르게 비교하세요!</p>
-                        <button onClick={startGame} className="px-10 py-5 bg-blue-600 hover:bg-blue-700 text-white text-3xl font-black rounded-full shadow-xl transform transition hover:scale-105 active:scale-95">시작하기!</button>
-                    </div>
-                );
-            }
+            if (gameState === 'start') return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                    <h1 className="text-5xl font-black text-indigo-900 mb-8">숫자 크기 비교</h1>
+                    <button onClick={() => { setHistory([]); setGameState('playing'); nextProblem(); }} className="px-12 py-6 bg-blue-600 text-white text-3xl font-black rounded-full shadow-2xl transition-transform hover:scale-105 active:scale-95">게임 시작!</button>
+                </div>
+            );
 
-            if (gameState === 'end') {
-                return (
-                    <div className="min-h-screen bg-indigo-50 flex flex-col items-center justify-center p-4">
-                        <div className="bg-white p-8 rounded-3xl shadow-2xl text-center max-w-xl w-full">
-                            <h1 className="text-4xl font-black text-indigo-900 mb-6">게임 종료!</h1>
-                            <div className="text-7xl font-black text-blue-600 mb-8">{calculateScore()}점</div>
-                            <div className="flex flex-wrap gap-2 justify-center mb-10">
-                                {history.map((m, i) => <span key={i} className={`text-3xl font-black ${getMarkColor(m)}`}>{m}</span>)}
-                            </div>
-                            <button onClick={startGame} className="px-8 py-4 bg-green-500 text-white text-2xl font-black rounded-2xl w-full hover:bg-green-600 transition">다시 하기</button>
+            if (gameState === 'end') return (
+                <div className="min-h-screen flex flex-col items-center justify-center p-4">
+                    <div className="bg-white p-10 rounded-3xl shadow-2xl text-center max-w-lg w-full">
+                        <h1 className="text-4xl font-black mb-6 text-indigo-900">결과 리포트</h1>
+                        <div className="text-7xl font-black text-blue-600 mb-6">{history.reduce((a, m) => a + (m === 'O' ? 10 : (m === '△' ? 5 : 0)), 0)}점</div>
+                        <div className="flex flex-wrap gap-2 justify-center mb-8">
+                            {history.map((m, i) => <span key={i} className={`text-3xl font-bold ${m === 'O' ? 'text-green-500' : (m === '△' ? 'text-yellow-500' : 'text-red-500')}`}>{m}</span>)}
                         </div>
+                        <button onClick={() => setGameState('start')} className="w-full py-4 bg-green-500 text-white text-2xl font-bold rounded-2xl">다시 하기</button>
                     </div>
-                );
-            }
+                </div>
+            );
 
             return (
-                <div className="min-h-screen bg-indigo-50 flex flex-col items-center justify-center p-4 relative overflow-hidden">
+                <div className="min-h-screen flex flex-col items-center justify-center p-4 relative">
                     <div className="absolute top-0 left-0 w-full h-3 bg-gray-200">
-                        <div className={`h-full ${timerColor} transition-all duration-100 ease-linear`} style={{ width: `${(timeLeft / TIME_LIMIT) * 100}%` }} />
+                        <div className={`h-full transition-all duration-100 ${timeLeft > 50 ? 'bg-green-400' : 'bg-red-500'}`} style={{ width: `${timeLeft}%` }} />
                     </div>
-                    <div className="mb-12 text-center">
-                        <p className="text-indigo-600 font-bold text-xl">문제 {history.length + 1} / {TOTAL_QUESTIONS}</p>
-                    </div>
-                    <div className="flex flex-col md:flex-row items-center gap-8 md:gap-16">
-                        <div className="bg-white shadow-xl rounded-3xl p-10 w-64 md:w-80 flex justify-center border-b-8 border-indigo-200">
-                            <span className="text-7xl md:text-8xl font-black text-gray-800">{num1}</span>
-                        </div>
+
+                    <div className="flex flex-col md:flex-row items-center gap-8 mb-20">
+                        <div className="bg-white p-8 rounded-3xl shadow-xl w-64 text-center border-b-8 border-indigo-200"><span className="text-7xl font-black">{nums[0]}</span></div>
                         <div className="flex flex-row md:flex-col gap-4">
-                            {['>', '=', '<'].map(op => (
-                                <button key={op} onClick={() => handleAnswer(op)} disabled={showFeedback} className="w-20 h-20 bg-blue-500 text-white text-4xl font-black rounded-2xl shadow-lg hover:scale-105 active:scale-95 transition flex items-center justify-center">{op === '>' ? '>' : op === '<' ? '<' : '='}</button>
-                            ))}
+                            {['>', '=', '<'].map(op => <button key={op} onClick={() => checkAnswer(op)} className="w-20 h-20 bg-blue-500 text-white text-4xl font-black rounded-2xl shadow-lg active:scale-90 transition-transform">{op}</button>)}
                         </div>
-                        <div className="bg-white shadow-xl rounded-3xl p-10 w-64 md:w-80 flex justify-center border-b-8 border-orange-200">
-                            <span className="text-7xl md:text-8xl font-black text-gray-800">{num2}</span>
-                        </div>
+                        <div className="bg-white p-8 rounded-3xl shadow-xl w-64 text-center border-b-8 border-orange-200"><span className="text-7xl font-black">{nums[1]}</span></div>
                     </div>
-                    {showFeedback && (
-                        <div className="absolute inset-0 flex items-center justify-center bg-white/70 backdrop-blur-sm z-50">
-                            <div className={`text-5xl md:text-7xl font-black ${feedbackStatus === 'correct' ? 'text-green-500' : (feedbackStatus === 'timeout' ? 'text-orange-500' : 'text-red-500')} animate-bounce`}>
-                                {feedbackStatus === 'correct' ? '정답입니다! 🎉' : (feedbackStatus === 'timeout' ? '시간 초과! ⏰' : '다시 해보세요! 💦')}
+
+                    {feedback && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-white/60 backdrop-blur-sm z-50 feedback-overlay">
+                            <div className={`text-6xl font-black ${feedback === 'correct' ? 'text-green-500' : 'text-red-500'} animate-bounce`}>
+                                {feedback === 'correct' ? '정답입니다! 🎉' : (feedback === 'timeout' ? '시간 초과! ⏰' : '다시 해보세요! 💦')}
                             </div>
                         </div>
                     )}
+
+                    {/* 하단 기록 바 (이 부분이 확실히 보이도록 수정됨) */}
+                    <div className="fixed bottom-10 w-full max-w-2xl px-6">
+                        <div className="bg-white/80 backdrop-blur p-4 rounded-2xl shadow-lg border border-indigo-100">
+                            <p className="text-center text-indigo-400 font-bold mb-2">실시간 학습 기록 ({history.length}/10)</p>
+                            <div className="flex flex-wrap gap-3 justify-center min-h-[40px]">
+                                {history.map((m, i) => <span key={i} className={`text-3xl font-black ${m === 'O' ? 'text-green-500' : (m === '△' ? 'text-yellow-500' : 'text-red-500')}`}>{m}</span>)}
+                                {history.length === 0 && <span className="text-gray-300">문제를 풀면 여기에 기록됩니다</span>}
+                            </div>
+                        </div>
+                    </div>
                 </div>
             );
         }
